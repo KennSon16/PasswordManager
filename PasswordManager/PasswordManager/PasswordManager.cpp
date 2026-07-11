@@ -197,6 +197,46 @@ void deleteEntry(std::vector<PasswordEntry>& entries) {
     }
 }
 
+// Edits an existing entry - lets you update any field, or leave it unchanged by pressing Enter
+void editEntry(std::vector<PasswordEntry>& entries) {
+    listEntries(entries);
+    if (entries.empty()) return;
+
+    std::cout << "Enter entry number to edit: ";
+    size_t index;
+    if (!(std::cin >> index)) {
+        std::cin.clear();
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cout << "Invalid input.\n\n";
+        return;
+    }
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+    if (index < 1 || index > entries.size()) {
+        std::cout << "Invalid entry number.\n\n";
+        return;
+    }
+
+    PasswordEntry& entry = entries[index - 1];
+    std::string input;
+
+    std::cout << "Editing entry for \"" << entry.site << "\". Press Enter to keep current value.\n";
+
+    std::cout << "Site/Service [" << entry.site << "]: ";
+    std::getline(std::cin, input);
+    if (!input.empty()) entry.site = input;
+
+    std::cout << "Username [" << entry.username << "]: ";
+    std::getline(std::cin, input);
+    if (!input.empty()) entry.username = input;
+
+    std::cout << "Password [" << entry.password << "]: ";
+    std::getline(std::cin, input);
+    if (!input.empty()) entry.password = input;
+
+    std::cout << "Entry updated.\n\n";
+}
+
 // ---------- Main ----------
 int main() {
     if (sodium_init() < 0) {
@@ -245,12 +285,13 @@ int main() {
     }
 
     int choice = 0;
-    while (choice != 4) {
+    while (choice != 5) {
         std::cout << "=== Password Manager ===\n";
         std::cout << "1. Add entry\n";
         std::cout << "2. View entries\n";
         std::cout << "3. Delete entry\n";
-        std::cout << "4. Exit\n";
+        std::cout << "4. Edit entry\n";
+        std::cout << "5. Exit\n";
         std::cout << "Choose an option: ";
 
         if (!(std::cin >> choice)) {
@@ -274,6 +315,10 @@ int main() {
             encryptAndSave(entries, masterPassword);
             break;
         case 4:
+            editEntry(entries);
+            encryptAndSave(entries, masterPassword);
+            break;
+        case 5:
             std::cout << "Goodbye!\n";
             break;
         default:

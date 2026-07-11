@@ -1,13 +1,13 @@
 # PasswordManager
 
 
-This is my Password manage that you can install and run locally 
+This is my Password manager that you can install and run locally 
 For safety, data is stored local and nothing is present on a cloud.
 With this implemention we are using sodium.h to help encrypt our files.
 
 please use follow the directions on https://github.com/microsoft/vcpkg
 
-## Install sodium
+## Install sodium and Imgui
 ### Clone vcpkg outside the repo (adjust path as you like)
 `git clone https://github.com/microsoft/vcpkg.git /c/dev/vcpkg`
 `cd /c/dev/vcpkg`
@@ -20,6 +20,15 @@ please use follow the directions on https://github.com/microsoft/vcpkg
 
 ### Install libsodium for 64-bit Windows
 `./vcpkg install libsodium:x64-windows`
+
+### Install Imgui for 64-bit Windows
+`./vcpkg install imgui[core,glfw-binding,opengl3-binding]:x64-windows`
+`./vcpkg install glfw3:x64-windows`
+
+### Verify
+Once done you can do:
+`./vcpkg list`
+you should see the package you have downloaded on to there
 
 ## The plan
 Master password → encryption key: We never store your master password. Instead, we derive a 256-bit encryption key from it using crypto_pwhash (Argon2id under the hood) combined with a random salt.
