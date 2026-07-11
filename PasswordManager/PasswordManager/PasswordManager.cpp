@@ -11,7 +11,6 @@
 #include <cstring>
 #include <sodium.h>
 
-// IF DEBUGGING, TO SEE TERMINAL TURN IT ON IN PROPERTIES > LINKER > SYSTEM > SUBSYSTEM TO CONSOLE
 // ---------- File / folder paths ----------
 const std::string DATA_FOLDER = "data";
 const std::string DATA_FILE = "data/vault.dat";
@@ -170,6 +169,10 @@ int main() {
     // Reveal-password tracking (only one row revealed at a time)
     int revealedRow = -1;
 
+    // Copy-to-clipboard feedback
+    std::string copiedLabel;
+    double copiedAt = -100.0;
+
     // Delete confirmation
     int pendingDeleteIndex = -1;
 
@@ -280,6 +283,17 @@ int main() {
 
             ImGui::Spacing();
 
+            // Temporary "Copied!" confirmation message
+            if (ImGui::GetTime() - copiedAt < 1.5) {
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s", copiedLabel.c_str());
+            }
+            else {
+                ImGui::TextUnformatted("Tip: click a username or password to copy it.");
+            }
+
+            bool openEditPopup = false;
+            bool openDeletePopup = false;
+
             if (ImGui::BeginTable("VaultTable", 4,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
                 ImGui::TableSetupColumn("Site / Service", ImGuiTableColumnFlags_WidthStretch, 0.3f);
@@ -296,14 +310,24 @@ int main() {
                     ImGui::TextUnformatted(entries[i].site.c_str());
 
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(entries[i].username.c_str());
+                    if (ImGui::Selectable(entries[i].username.c_str(), false, ImGuiSelectableFlags_None)) {
+                        ImGui::SetClipboardText(entries[i].username.c_str());
+                        copiedLabel = "Copied username for \"" + entries[i].site + "\"";
+                        copiedAt = ImGui::GetTime();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to copy username");
+                    }
 
                     ImGui::TableSetColumnIndex(2);
-                    if (revealedRow == i) {
-                        ImGui::TextUnformatted(entries[i].password.c_str());
+                    const char* passwordDisplay = (revealedRow == i) ? entries[i].password.c_str() : "********";
+                    if (ImGui::Selectable(passwordDisplay, false, ImGuiSelectableFlags_None)) {
+                        ImGui::SetClipboardText(entries[i].password.c_str());
+                        copiedLabel = "Copied password for \"" + entries[i].site + "\"";
+                        copiedAt = ImGui::GetTime();
                     }
-                    else {
-                        ImGui::TextUnformatted("********");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to copy password");
                     }
 
                     ImGui::TableSetColumnIndex(3);
@@ -316,18 +340,27 @@ int main() {
                         strncpy_s(formSite, entries[i].site.c_str(), _TRUNCATE);
                         strncpy_s(formUser, entries[i].username.c_str(), _TRUNCATE);
                         strncpy_s(formPass, entries[i].password.c_str(), _TRUNCATE);
-                        ImGui::OpenPopup("Entry Form");
+                        openEditPopup = true;
                     }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Delete")) {
                         pendingDeleteIndex = i;
-                        ImGui::OpenPopup("Confirm Delete");
+                        openDeletePopup = true;
                     }
 
                     ImGui::PopID();
                 }
 
                 ImGui::EndTable();
+            }
+
+            // Open popups here, OUTSIDE the row PushID scope, so their IDs
+            // match the BeginPopupModal calls below regardless of which row triggered them.
+            if (openEditPopup) {
+                ImGui::OpenPopup("Entry Form");
+            }
+            if (openDeletePopup) {
+                ImGui::OpenPopup("Confirm Delete");
             }
 
             // ---------- Add / Edit popup ----------
