@@ -1,16 +1,20 @@
-#include <iostream>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_opengl3.h>
+#include <GLFW/glfw3.h>
+
 #include <vector>
 #include <string>
-#include <limits>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
-#include <conio.h>   // for masked password input (_getch) - Windows only
+#include <cstring>
 #include <sodium.h>
 
+// IF DEBUGGING, TO SEE TERMINAL TURN IT ON IN PROPERTIES > LINKER > SYSTEM > SUBSYSTEM TO CONSOLE
 // ---------- File / folder paths ----------
 const std::string DATA_FOLDER = "data";
-const std::string DATA_FILE = "data/vault.dat"; // binary encrypted file now, not plain text
+const std::string DATA_FILE = "data/vault.dat";
 
 // ---------- Data model ----------
 struct PasswordEntry {
@@ -19,30 +23,7 @@ struct PasswordEntry {
     std::string password;
 };
 
-// ---------- Masked password input ----------
-// Reads a password from the console, printing '*' instead of the real characters.
-std::string promptPassword(const std::string& prompt) {
-    std::cout << prompt;
-    std::string password;
-    char ch;
-    while ((ch = _getch()) != '\r') { // Enter key
-        if (ch == '\b') { // Backspace
-            if (!password.empty()) {
-                password.pop_back();
-                std::cout << "\b \b"; // erase the last '*' visually
-            }
-        }
-        else {
-            password.push_back(ch);
-            std::cout << '*';
-        }
-    }
-    std::cout << "\n";
-    return password;
-}
-
 // ---------- Serialization ----------
-// Combines all entries into a single string, 3 lines per entry (site/username/password)
 std::string serializeEntries(const std::vector<PasswordEntry>& entries) {
     std::string blob;
     for (const auto& entry : entries) {
@@ -53,7 +34,6 @@ std::string serializeEntries(const std::vector<PasswordEntry>& entries) {
     return blob;
 }
 
-// Parses the decrypted blob back into entries
 std::vector<PasswordEntry> deserializeEntries(const std::string& blob) {
     std::vector<PasswordEntry> entries;
     std::istringstream stream(blob);
@@ -67,7 +47,6 @@ std::vector<PasswordEntry> deserializeEntries(const std::string& blob) {
 }
 
 // ---------- Key derivation ----------
-// Derives a 32-byte encryption key from the master password + salt using Argon2id
 bool deriveKey(const std::string& password, const unsigned char* salt, unsigned char* outKey) {
     return crypto_pwhash(
         outKey, crypto_secretbox_KEYBYTES,
@@ -89,10 +68,7 @@ void encryptAndSave(const std::vector<PasswordEntry>& entries, const std::string
     randombytes_buf(salt, sizeof(salt));
 
     unsigned char key[crypto_secretbox_KEYBYTES];
-    if (!deriveKey(masterPassword, salt, key)) {
-        std::cout << "Error: key derivation failed (out of memory?).\n";
-        return;
-    }
+    if (!deriveKey(masterPassword, salt, key)) return;
 
     unsigned char nonce[crypto_secretbox_NONCEBYTES];
     randombytes_buf(nonce, sizeof(nonce));
@@ -105,21 +81,16 @@ void encryptAndSave(const std::vector<PasswordEntry>& entries, const std::string
     );
 
     std::ofstream outFile(DATA_FILE, std::ios::binary | std::ios::trunc);
-    if (!outFile) {
-        std::cout << "Error: could not open file for saving.\n";
-        return;
-    }
+    if (!outFile) return;
     outFile.write(reinterpret_cast<const char*>(salt), sizeof(salt));
     outFile.write(reinterpret_cast<const char*>(nonce), sizeof(nonce));
     outFile.write(reinterpret_cast<const char*>(ciphertext.data()), ciphertext.size());
     outFile.close();
 
-    // Wipe the key from memory now that we're done with it
     sodium_memzero(key, sizeof(key));
 }
 
 // ---------- Load + decrypt ----------
-// Returns true on success (entries populated). Returns false on wrong password or missing file.
 enum class LoadResult { Success, WrongPassword, NoFile, FileError };
 
 LoadResult decryptAndLoad(const std::string& masterPassword, std::vector<PasswordEntry>& outEntries) {
@@ -154,180 +125,296 @@ LoadResult decryptAndLoad(const std::string& masterPassword, std::vector<Passwor
     return LoadResult::Success;
 }
 
-// ---------- Menu actions ----------
-void addEntry(std::vector<PasswordEntry>& entries) {
-    PasswordEntry entry;
-    std::cout << "Site/Service: ";
-    std::getline(std::cin, entry.site);
-    std::cout << "Username: ";
-    std::getline(std::cin, entry.username);
-    std::cout << "Password: ";
-    std::getline(std::cin, entry.password);
-    entries.push_back(entry);
-    std::cout << "Entry added.\n\n";
-}
+// ---------- App state ----------
+enum class Screen { Unlock, Vault };
 
-void listEntries(const std::vector<PasswordEntry>& entries) {
-    if (entries.empty()) {
-        std::cout << "No entries yet.\n\n";
-        return;
-    }
-    std::cout << "\n--- Stored Entries ---\n";
-    for (size_t i = 0; i < entries.size(); ++i) {
-        std::cout << i + 1 << ". " << entries[i].site
-            << " | " << entries[i].username
-            << " | " << entries[i].password << "\n";
-    }
-    std::cout << "----------------------\n\n";
-}
-
-void deleteEntry(std::vector<PasswordEntry>& entries) {
-    listEntries(entries);
-    if (entries.empty()) return;
-    std::cout << "Enter entry number to delete: ";
-    size_t index;
-    std::cin >> index;
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    if (index >= 1 && index <= entries.size()) {
-        entries.erase(entries.begin() + (index - 1));
-        std::cout << "Entry deleted.\n\n";
-    }
-    else {
-        std::cout << "Invalid entry number.\n\n";
-    }
-}
-
-// Edits an existing entry - lets you update any field, or leave it unchanged by pressing Enter
-void editEntry(std::vector<PasswordEntry>& entries) {
-    listEntries(entries);
-    if (entries.empty()) return;
-
-    std::cout << "Enter entry number to edit: ";
-    size_t index;
-    if (!(std::cin >> index)) {
-        std::cin.clear();
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        std::cout << "Invalid input.\n\n";
-        return;
-    }
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-    if (index < 1 || index > entries.size()) {
-        std::cout << "Invalid entry number.\n\n";
-        return;
-    }
-
-    PasswordEntry& entry = entries[index - 1];
-    std::string input;
-
-    std::cout << "Editing entry for \"" << entry.site << "\". Press Enter to keep current value.\n";
-
-    std::cout << "Site/Service [" << entry.site << "]: ";
-    std::getline(std::cin, input);
-    if (!input.empty()) entry.site = input;
-
-    std::cout << "Username [" << entry.username << "]: ";
-    std::getline(std::cin, input);
-    if (!input.empty()) entry.username = input;
-
-    std::cout << "Password [" << entry.password << "]: ";
-    std::getline(std::cin, input);
-    if (!input.empty()) entry.password = input;
-
-    std::cout << "Entry updated.\n\n";
-}
-
-// ---------- Main ----------
 int main() {
     if (sodium_init() < 0) {
-        std::cout << "Error: libsodium failed to initialize.\n";
         return 1;
     }
 
+    // ---------- GLFW / ImGui setup ----------
+    if (!glfwInit()) return 1;
+
+    const char* glsl_version = "#version 130";
+    GLFWwindow* window = glfwCreateWindow(900, 600, "Password Manager", nullptr, nullptr);
+    if (!window) { glfwTerminate(); return 1; }
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    (void)io;
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init(glsl_version);
+
+    // ---------- App data ----------
     std::vector<PasswordEntry> entries;
     std::string masterPassword;
+    bool vaultFileExists = std::filesystem::exists(DATA_FILE);
+    Screen screen = Screen::Unlock;
 
-    bool fileExists = std::filesystem::exists(DATA_FILE);
+    // Unlock screen buffers/state
+    char unlockPasswordBuf[128] = "";
+    char confirmPasswordBuf[128] = "";
+    std::string unlockError;
 
-    if (!fileExists) {
-        std::cout << "No vault found - let's create one.\n";
-        std::string confirm;
-        while (true) {
-            masterPassword = promptPassword("Create a master password: ");
-            confirm = promptPassword("Confirm master password: ");
-            if (masterPassword == confirm && !masterPassword.empty()) break;
-            std::cout << "Passwords didn't match (or was empty) - try again.\n";
-        }
-        encryptAndSave(entries, masterPassword); // saves an empty vault
-        std::cout << "Vault created.\n\n";
-    }
-    else {
-        LoadResult result;
-        int attempts = 0;
-        do {
-            masterPassword = promptPassword("Enter your master password: ");
-            result = decryptAndLoad(masterPassword, entries);
-            if (result == LoadResult::WrongPassword) {
-                std::cout << "Incorrect password. Try again.\n";
-                attempts++;
+    // Add/Edit form buffers/state
+    char formSite[256] = "";
+    char formUser[256] = "";
+    char formPass[256] = "";
+    int editIndex = -1; // -1 means "adding new", >=0 means "editing that index"
+
+    // Reveal-password tracking (only one row revealed at a time)
+    int revealedRow = -1;
+
+    // Delete confirmation
+    int pendingDeleteIndex = -1;
+
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGui::Begin("PasswordManagerRoot", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
+        if (screen == Screen::Unlock) {
+            // ---------- Unlock / Create vault screen ----------
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() * 0.35f);
+            float boxWidth = 400.0f;
+            float centerX = (ImGui::GetWindowWidth() - boxWidth) * 0.5f;
+            ImGui::SetCursorPosX(centerX);
+            ImGui::BeginChild("UnlockBox", ImVec2(boxWidth, 220), true);
+
+            if (!vaultFileExists) {
+                ImGui::TextWrapped("No vault found. Create a master password to get started.");
+                ImGui::Spacing();
+                ImGui::Text("New master password:");
+                ImGui::InputText("##newpass", unlockPasswordBuf, IM_ARRAYSIZE(unlockPasswordBuf), ImGuiInputTextFlags_Password);
+                ImGui::Text("Confirm password:");
+                ImGui::InputText("##confirmpass", confirmPasswordBuf, IM_ARRAYSIZE(confirmPasswordBuf), ImGuiInputTextFlags_Password);
+
+                if (ImGui::Button("Create Vault", ImVec2(-1, 0))) {
+                    std::string p1 = unlockPasswordBuf;
+                    std::string p2 = confirmPasswordBuf;
+                    if (p1.empty()) {
+                        unlockError = "Password cannot be empty.";
+                    }
+                    else if (p1 != p2) {
+                        unlockError = "Passwords do not match.";
+                    }
+                    else {
+                        masterPassword = p1;
+                        entries.clear();
+                        encryptAndSave(entries, masterPassword);
+                        vaultFileExists = true;
+                        unlockError.clear();
+                        std::memset(unlockPasswordBuf, 0, sizeof(unlockPasswordBuf));
+                        std::memset(confirmPasswordBuf, 0, sizeof(confirmPasswordBuf));
+                        screen = Screen::Vault;
+                    }
+                }
             }
-        } while (result == LoadResult::WrongPassword && attempts < 5);
+            else {
+                ImGui::Text("Enter your master password:");
+                ImGui::InputText("##unlockpass", unlockPasswordBuf, IM_ARRAYSIZE(unlockPasswordBuf), ImGuiInputTextFlags_Password);
 
-        if (result == LoadResult::WrongPassword) {
-            std::cout << "Too many failed attempts. Exiting.\n";
-            return 1;
+                bool enterPressed = ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter);
+
+                if (ImGui::Button("Unlock", ImVec2(-1, 0)) || enterPressed) {
+                    std::string attempt = unlockPasswordBuf;
+                    LoadResult result = decryptAndLoad(attempt, entries);
+                    if (result == LoadResult::Success) {
+                        masterPassword = attempt;
+                        unlockError.clear();
+                        std::memset(unlockPasswordBuf, 0, sizeof(unlockPasswordBuf));
+                        screen = Screen::Vault;
+                    }
+                    else if (result == LoadResult::WrongPassword) {
+                        unlockError = "Incorrect password.";
+                    }
+                    else {
+                        unlockError = "Vault file error.";
+                    }
+                }
+            }
+
+            if (!unlockError.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", unlockError.c_str());
+            }
+
+            ImGui::EndChild();
         }
-        if (result == LoadResult::FileError) {
-            std::cout << "Error: vault file is corrupted or unreadable.\n";
-            return 1;
+        else {
+            // ---------- Main vault screen ----------
+            ImGui::Text("Password Vault");
+            ImGui::SameLine(ImGui::GetWindowWidth() - 140);
+            if (ImGui::Button("Lock", ImVec2(120, 0))) {
+                // Wipe in-memory data and go back to unlock screen
+                sodium_memzero(&masterPassword[0], masterPassword.size());
+                masterPassword.clear();
+                entries.clear();
+                revealedRow = -1;
+                screen = Screen::Unlock;
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::Button("+ Add Entry")) {
+                editIndex = -1;
+                formSite[0] = '\0';
+                formUser[0] = '\0';
+                formPass[0] = '\0';
+                ImGui::OpenPopup("Entry Form");
+            }
+
+            ImGui::Spacing();
+
+            if (ImGui::BeginTable("VaultTable", 4,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                ImGui::TableSetupColumn("Site / Service", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                ImGui::TableSetupColumn("Username", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                ImGui::TableSetupColumn("Password", ImGuiTableColumnFlags_WidthStretch, 0.25f);
+                ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+                ImGui::TableHeadersRow();
+
+                for (int i = 0; i < (int)entries.size(); ++i) {
+                    ImGui::TableNextRow();
+                    ImGui::PushID(i);
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(entries[i].site.c_str());
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(entries[i].username.c_str());
+
+                    ImGui::TableSetColumnIndex(2);
+                    if (revealedRow == i) {
+                        ImGui::TextUnformatted(entries[i].password.c_str());
+                    }
+                    else {
+                        ImGui::TextUnformatted("********");
+                    }
+
+                    ImGui::TableSetColumnIndex(3);
+                    if (ImGui::SmallButton(revealedRow == i ? "Hide" : "Show")) {
+                        revealedRow = (revealedRow == i) ? -1 : i;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Edit")) {
+                        editIndex = i;
+                        strncpy_s(formSite, entries[i].site.c_str(), _TRUNCATE);
+                        strncpy_s(formUser, entries[i].username.c_str(), _TRUNCATE);
+                        strncpy_s(formPass, entries[i].password.c_str(), _TRUNCATE);
+                        ImGui::OpenPopup("Entry Form");
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Delete")) {
+                        pendingDeleteIndex = i;
+                        ImGui::OpenPopup("Confirm Delete");
+                    }
+
+                    ImGui::PopID();
+                }
+
+                ImGui::EndTable();
+            }
+
+            // ---------- Add / Edit popup ----------
+            ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Entry Form", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text(editIndex == -1 ? "Add New Entry" : "Edit Entry");
+                ImGui::Separator();
+
+                ImGui::Text("Site / Service");
+                ImGui::InputText("##formsite", formSite, IM_ARRAYSIZE(formSite));
+                ImGui::Text("Username");
+                ImGui::InputText("##formuser", formUser, IM_ARRAYSIZE(formUser));
+                ImGui::Text("Password");
+                ImGui::InputText("##formpass", formPass, IM_ARRAYSIZE(formPass));
+
+                ImGui::Spacing();
+
+                if (ImGui::Button("Save", ImVec2(120, 0))) {
+                    if (editIndex == -1) {
+                        PasswordEntry newEntry;
+                        newEntry.site = formSite;
+                        newEntry.username = formUser;
+                        newEntry.password = formPass;
+                        entries.push_back(newEntry);
+                    }
+                    else {
+                        entries[editIndex].site = formSite;
+                        entries[editIndex].username = formUser;
+                        entries[editIndex].password = formPass;
+                    }
+                    encryptAndSave(entries, masterPassword);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
+            // ---------- Delete confirmation popup ----------
+            if (ImGui::BeginPopupModal("Confirm Delete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (pendingDeleteIndex >= 0 && pendingDeleteIndex < (int)entries.size()) {
+                    ImGui::Text("Delete entry for \"%s\"?", entries[pendingDeleteIndex].site.c_str());
+                }
+                ImGui::Spacing();
+                if (ImGui::Button("Delete", ImVec2(120, 0))) {
+                    if (pendingDeleteIndex >= 0 && pendingDeleteIndex < (int)entries.size()) {
+                        entries.erase(entries.begin() + pendingDeleteIndex);
+                        encryptAndSave(entries, masterPassword);
+                        revealedRow = -1;
+                    }
+                    pendingDeleteIndex = -1;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                    pendingDeleteIndex = -1;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
         }
-        std::cout << "Vault unlocked.\n\n";
+
+        ImGui::End();
+
+        ImGui::Render();
+        int display_w, display_h;
+        glfwGetFramebufferSize(window, &display_w, &display_h);
+        glViewport(0, 0, display_w, display_h);
+        glClearColor(0.08f, 0.08f, 0.1f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        glfwSwapBuffers(window);
     }
 
-    int choice = 0;
-    while (choice != 5) {
-        std::cout << "=== Password Manager ===\n";
-        std::cout << "1. Add entry\n";
-        std::cout << "2. View entries\n";
-        std::cout << "3. Delete entry\n";
-        std::cout << "4. Edit entry\n";
-        std::cout << "5. Exit\n";
-        std::cout << "Choose an option: ";
-
-        if (!(std::cin >> choice)) {
-            std::cin.clear();
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            std::cout << "Please enter a number.\n\n";
-            continue;
-        }
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-        switch (choice) {
-        case 1:
-            addEntry(entries);
-            encryptAndSave(entries, masterPassword);
-            break;
-        case 2:
-            listEntries(entries);
-            break;
-        case 3:
-            deleteEntry(entries);
-            encryptAndSave(entries, masterPassword);
-            break;
-        case 4:
-            editEntry(entries);
-            encryptAndSave(entries, masterPassword);
-            break;
-        case 5:
-            std::cout << "Goodbye!\n";
-            break;
-        default:
-            std::cout << "Invalid option, try again.\n\n";
-        }
+    if (!masterPassword.empty()) {
+        sodium_memzero(&masterPassword[0], masterPassword.size());
     }
 
-    // Wipe the master password from memory before exiting
-    sodium_memzero(&masterPassword[0], masterPassword.size());
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 
+    glfwDestroyWindow(window);
+    glfwTerminate();
     return 0;
 }
