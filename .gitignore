@@ -1,0 +1,69 @@
+# ==========================
+# Visual Studio / C++ .gitignore
+# ==========================
+
+# Visual Studio cache/options directory
+.vs/
+
+# Build output folders
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+[Bb]in/
+[Oo]bj/
+out/
+
+# CMake generated files (if you use CMake later)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CMakeUserPresets.json
+
+# Visual Studio user-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Compiled binaries and intermediates
+*.exe
+*.dll
+*.lib
+*.pdb
+*.obj
+*.ilk
+*.exp
+*.idb
+*.iobj
+*.ipdb
+
+# vcpkg (if you install libraries via vcpkg locally instead of system-wide)
+vcpkg_installed/
+
+# Precompiled headers
+*.pch
+
+# Visual Studio auto-generated files
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+
+# Windows-specific junk
+Thumbs.db
+desktop.ini
+
+# Log files
+*.log
+
+# Test results
+TestResults/
+
+# Optional: keep your data folder out of source control
+# (uncomment if your password vault file should never be committed)
+# data/
