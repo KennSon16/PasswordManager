@@ -66,4 +66,4 @@ TestResults/
 
 # Optional: keep your data folder out of source control
 # (uncomment if your password vault file should never be committed)
-# data/
+data/
