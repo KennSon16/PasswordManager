@@ -1,7 +1,7 @@
 # PasswordManager
 
 
-This is my Password manage that you can install and run locally 
+This is my Password manager that you can install and run locally 
 For safety, data is stored local and nothing is present on a cloud.
 With this implemention we are using sodium.h to help encrypt our files.
 
